@@ -135,9 +135,10 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # worksheet=2 pega a TERCEIRA aba (Orcamentos)
+                # CORREÇÃO: Usamos o índice 2 (terceira aba) para evitar o erro 404 por nome
                 df_atual = conn.read(worksheet=2, ttl=0)
                 
+                # Criamos a nova linha respeitando a ordem das colunas da planilha
                 novo_linha = pd.DataFrame([{
                     df_atual.columns[0]: nome_cliente,
                     df_atual.columns[1]: datetime.now().strftime("%d/%m/%Y"),
@@ -146,7 +147,8 @@ with tabs[0]:
                 }])
                 
                 df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
-                # O update usando o índice numérico da aba evita erros de 404 por nome
+                
+                # O update usando o índice numérico da aba (worksheet=2)
                 conn.update(worksheet=2, data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
@@ -170,12 +172,6 @@ with tabs[1]:
         
         st.metric("Custo Hora Calculado", format_brl(calcular_custo_hora()))
 
-    st.subheader("Pesos de Esforço (Configurável)")
-    with st.expander("Ajustar Parâmetros de Tempo"):
-        st.session_state.pesos_esforço['por_funcionario'] = st.number_input("Horas por Funcionário", value=st.session_state.pesos_esforço['por_funcionario'])
-        st.session_state.pesos_esforço['por_nota_fiscal'] = st.number_input("Horas por Nota Fiscal", value=st.session_state.pesos_esforço['por_nota_fiscal'])
-        st.session_state.pesos_esforço['por_lancamento'] = st.number_input("Horas por Lançamento Contábil", value=st.session_state.pesos_esforço['por_lancamento'])
-
 # --- TAB 3: DASHBOARD GERENCIAL ---
 with tabs[2]:
     st.header("Análise de Carteira Real")
@@ -184,7 +180,7 @@ with tabs[2]:
         df_real = conn.read(worksheet=2, ttl=0)
         df_display = df_real.copy()
         if not df_display.empty:
-            # Formata a terceira coluna (índice 2) independente do nome
+            # Formata a terceira coluna (índice 2) como moeda
             df_display.iloc[:, 2] = df_display.iloc[:, 2].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
         else:
