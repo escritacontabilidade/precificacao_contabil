@@ -18,10 +18,16 @@ def format_brl(valor):
 # --- CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Constantes de GID (IDs extraídos das suas imagens para evitar 404)
+# Orcamentos: gid=2020767836 | Custos: gid=0 | Pesos: gid=1471013444
+GID_CUSTOS = 0
+GID_PESOS = 1471013444
+GID_ORCAMENTOS = 2020767836
+
 def carregar_config_custos():
     try:
-        # worksheet=0 pega a PRIMEIRA aba (Custos)
-        df = conn.read(worksheet=0, ttl=0)
+        # Usa o ID da aba específico (GID)
+        df = conn.read(worksheet=GID_CUSTOS, ttl=0)
         return {
             'pessoal': float(df.iloc[0, 1]),
             'despesas_gerais': float(df.iloc[1, 1]),
@@ -29,7 +35,7 @@ def carregar_config_custos():
             'horas_uteis_colaborador': float(df.iloc[3, 1]),
             'total_colaboradores': int(df.iloc[4, 1])
         }
-    except Exception as e:
+    except Exception:
         return {
             'pessoal': 50000.0, 'despesas_gerais': 15000.0, 'impostos_sobre_faturamento': 15.0,
             'horas_uteis_colaborador': 140.0, 'total_colaboradores': 5
@@ -37,8 +43,7 @@ def carregar_config_custos():
 
 def carregar_pesos():
     try:
-        # worksheet=1 pega a SEGUNDA aba (Pesos)
-        df = conn.read(worksheet=1, ttl=0)
+        df = conn.read(worksheet=GID_PESOS, ttl=0)
         return {
             'base_regime': {'Simples': float(df.iloc[0, 1]), 
                             'Presumido': float(df.iloc[1, 1]), 
@@ -49,7 +54,7 @@ def carregar_pesos():
             'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8},
             'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}
         }
-    except:
+    except Exception:
         return {
             'base_regime': {'Simples': 2.0, 'Presumido': 5.0, 'Real': 10.0},
             'por_funcionario': 0.5, 'por_nota_fiscal': 0.1, 'por_lancamento': 0.05,
@@ -135,22 +140,24 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # CORREÇÃO: Usamos o índice 2 (terceira aba) para evitar o erro 404 por nome
-                df_atual = conn.read(worksheet=2, ttl=0)
+                # Lemos a aba específica de Orçamentos via GID
+                df_atual = conn.read(worksheet=GID_ORCAMENTOS, ttl=0)
                 
-                # Criamos a nova linha respeitando a ordem das colunas da planilha
-                novo_linha = pd.DataFrame([{
+                # Criamos a nova linha
+                nova_data = {
                     df_atual.columns[0]: nome_cliente,
                     df_atual.columns[1]: datetime.now().strftime("%d/%m/%Y"),
                     df_atual.columns[2]: round(precos_calculados['Prata'], 2),
                     df_atual.columns[3]: 35
-                }])
+                }
                 
-                df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
+                df_novo = pd.DataFrame([nova_data])
+                df_final = pd.concat([df_atual, df_novo], ignore_index=True)
                 
-                # O update usando o índice numérico da aba (worksheet=2)
-                conn.update(worksheet=2, data=df_final)
+                # Atualiza usando o GID exato
+                conn.update(worksheet=GID_ORCAMENTOS, data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
+                st.cache_data.clear() # Limpa o cache para atualizar o Dashboard
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
         else:
@@ -176,11 +183,10 @@ with tabs[1]:
 with tabs[2]:
     st.header("Análise de Carteira Real")
     try:
-        # worksheet=2 pega a TERCEIRA aba
-        df_real = conn.read(worksheet=2, ttl=0)
-        df_display = df_real.copy()
-        if not df_display.empty:
-            # Formata a terceira coluna (índice 2) como moeda
+        df_real = conn.read(worksheet=GID_ORCAMENTOS, ttl=0)
+        if not df_real.empty:
+            df_display = df_real.copy()
+            # Formata a coluna de preço (índice 2)
             df_display.iloc[:, 2] = df_display.iloc[:, 2].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
         else:
