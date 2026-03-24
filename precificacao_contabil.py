@@ -16,21 +16,21 @@ def format_brl(valor):
         return "R$ 0,00"
 
 # --- CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS) ---
-# Com a planilha pública, o Streamlit usará a URL definida no Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_config_custos():
     try:
-        df = conn.read(worksheet="Custos", ttl=0)
+        # Lê a 1ª aba (índice 0) idependente do nome
+        df = conn.read(worksheet=0, ttl=0)
+        # Acessa pela posição: iloc[linha, coluna]
         return {
-            'pessoal': float(df.loc[df['item'] == 'pessoal', 'valor'].values[0]),
-            'despesas_gerais': float(df.loc[df['item'] == 'despesas_gerais', 'valor'].values[0]),
-            'impostos_sobre_faturamento': float(df.loc[df['item'] == 'impostos', 'valor'].values[0]),
-            'horas_uteis_colaborador': float(df.loc[df['item'] == 'horas_uteis', 'valor'].values[0]),
-            'total_colaboradores': int(df.loc[df['item'] == 'colaboradores', 'valor'].values[0])
+            'pessoal': float(df.iloc[0, 1]),
+            'despesas_gerais': float(df.iloc[1, 1]),
+            'impostos_sobre_faturamento': float(df.iloc[2, 1]),
+            'horas_uteis_colaborador': float(df.iloc[3, 1]),
+            'total_colaboradores': int(df.iloc[4, 1])
         }
     except Exception as e:
-        # Se houver erro, mantém valores padrão para não travar o app
         return {
             'pessoal': 50000.0, 'despesas_gerais': 15000.0, 'impostos_sobre_faturamento': 15.0,
             'horas_uteis_colaborador': 140.0, 'total_colaboradores': 5
@@ -38,15 +38,17 @@ def carregar_config_custos():
 
 def carregar_pesos():
     try:
-        df = conn.read(worksheet="Pesos", ttl=0)
-        # Usando 'valor_peso' conforme a estrutura da sua planilha
+        # Lê a 2ª aba (índice 1)
+        df = conn.read(worksheet=1, ttl=0)
         return {
-            'base_regime': {'Simples': float(df.loc[df['parametro'] == 'Simples', 'valor_peso'].values[0]), 
-                            'Presumido': float(df.loc[df['parametro'] == 'Presumido', 'valor_peso'].values[0]), 
-                            'Real': float(df.loc[df['parametro'] == 'Real', 'valor_peso'].values[0])},
-            'por_funcionario': float(df.loc[df['parametro'] == 'por_funcionario', 'valor_peso'].values[0]),
-            'por_nota_fiscal': float(df.loc[df['parametro'] == 'por_nota_fiscal', 'valor_peso'].values[0]),
-            'por_lancamento': float(df.loc[df['parametro'] == 'por_lancamento', 'valor_peso'].values[0]),
+            'base_regime': {
+                'Simples': float(df.iloc[0, 1]), 
+                'Presumido': float(df.iloc[1, 1]), 
+                'Real': float(df.iloc[2, 1])
+            },
+            'por_funcionario': float(df.iloc[3, 1]),
+            'por_nota_fiscal': float(df.iloc[4, 1]),
+            'por_lancamento': float(df.iloc[5, 1]),
             'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8},
             'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}
         }
@@ -136,17 +138,24 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # Lógica de atualização
-                df_atual = conn.read(worksheet="Orcamentos", ttl=0)
-                novo_linha = pd.DataFrame([{
-                    "cliente": nome_cliente,
-                    "data": datetime.now().strftime("%d/%m/%Y"),
-                    "preco_sugerido": round(precos_calculados['Prata'], 2),
-                    "margem": 35
-                }])
-                df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
-                # O update funcionará se o link estiver como "Qualquer pessoa com o link" como Editor
-                conn.update(worksheet="Orcamentos", data=df_final)
+                # Lê a 3ª aba (índice 2) para o histórico
+                df_atual = conn.read(worksheet=2, ttl=0)
+                
+                # Criamos o novo dado ignorando os nomes de colunas originais
+                # Garantimos que a ordem seja: Cliente, Data, Preço, Margem
+                novo_dado = [
+                    nome_cliente, 
+                    datetime.now().strftime("%d/%m/%Y"), 
+                    round(precos_calculados['Prata'], 2), 
+                    35
+                ]
+                
+                # Criamos um DataFrame temporário com os mesmos cabeçalhos do atual para o concat
+                df_novo = pd.DataFrame([novo_dado], columns=df_atual.columns)
+                df_final = pd.concat([df_atual, df_novo], ignore_index=True)
+                
+                # Salva na 3ª aba
+                conn.update(worksheet=2, data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
@@ -179,14 +188,15 @@ with tabs[1]:
 with tabs[2]:
     st.header("Análise de Carteira Real")
     try:
-        df_real = conn.read(worksheet="Orcamentos", ttl=0)
+        # Lê a 3ª aba
+        df_real = conn.read(worksheet=2, ttl=0)
         df_display = df_real.copy()
         if not df_display.empty:
-            if 'preco_sugerido' in df_display.columns:
-                df_display['preco_sugerido'] = df_display['preco_sugerido'].apply(format_brl)
+            # Formata a 3ª coluna (Preço) independente do nome que ela tenha
+            df_display.iloc[:, 2] = df_display.iloc[:, 2].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
         else:
-            st.info("A aba 'Orcamentos' está vazia.")
+            st.info("O histórico está vazio.")
     except Exception as e:
         st.warning(f"Erro ao carregar dashboard: {e}")
 
