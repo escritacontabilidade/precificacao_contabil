@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from streamlit_gsheets import GSheetsConnection
-import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
 
 # Configuração da Página
@@ -17,31 +15,19 @@ def format_brl(valor):
     except:
         return "R$ 0,00"
 
-# --- CONEXÃO PARA LEITURA (O QUE JÁ FUNCIONA) ---
+# --- CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- CONFIGURAÇÃO PARA ESCRITA (GSPREAD - MAIS ROBUSTO) ---
-def get_gspread_client():
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    # Puxa as credenciais direto do que você já tem no Secrets
-    creds_dict = {
-        "type": st.secrets["connections"]["gsheets"]["type"],
-        "project_id": st.secrets["connections"]["gsheets"]["project_id"],
-        "private_key_id": st.secrets["connections"]["gsheets"]["private_key_id"],
-        "private_key": st.secrets["connections"]["gsheets"]["private_key"],
-        "client_email": st.secrets["connections"]["gsheets"]["client_email"],
-        "client_id": st.secrets["connections"]["gsheets"]["client_id"],
-        "auth_uri": st.secrets["connections"]["gsheets"]["auth_uri"],
-        "token_uri": st.secrets["connections"]["gsheets"]["token_uri"],
-        "auth_provider_x509_cert_url": st.secrets["connections"]["gsheets"]["auth_provider_x509_cert_url"],
-        "client_x509_cert_url": st.secrets["connections"]["gsheets"]["client_x509_cert_url"],
-    }
-    credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
-    return gspread.authorize(credentials)
+# Constantes de GID (IDs extraídos das suas imagens para evitar 404)
+# Passando como string para garantir que a API reconheça como ID de aba (GID) e não índice
+GID_CUSTOS = "0"
+GID_PESOS = "1471013444"
+GID_ORCAMENTOS = "2020767836"
 
 def carregar_config_custos():
     try:
-        df = conn.read(worksheet=0, ttl=0)
+        # Usa o ID da aba específico (GID)
+        df = conn.read(worksheet=GID_CUSTOS, ttl=0)
         return {
             'pessoal': float(df.iloc[0, 1]),
             'despesas_gerais': float(df.iloc[1, 1]),
@@ -49,115 +35,169 @@ def carregar_config_custos():
             'horas_uteis_colaborador': float(df.iloc[3, 1]),
             'total_colaboradores': int(df.iloc[4, 1])
         }
-    except:
-        return {'pessoal': 50000.0, 'despesas_gerais': 15000.0, 'impostos_sobre_faturamento': 15.0, 'horas_uteis_colaborador': 140.0, 'total_colaboradores': 5}
+    except Exception:
+        return {
+            'pessoal': 50000.0, 'despesas_gerais': 15000.0, 'impostos_sobre_faturamento': 15.0,
+            'horas_uteis_colaborador': 140.0, 'total_colaboradores': 5
+        }
 
 def carregar_pesos():
     try:
-        df = conn.read(worksheet=1, ttl=0)
+        df = conn.read(worksheet=GID_PESOS, ttl=0)
         return {
-            'base_regime': {'Simples': float(df.iloc[0, 1]), 'Presumido': float(df.iloc[1, 1]), 'Real': float(df.iloc[2, 1])},
+            'base_regime': {'Simples': float(df.iloc[0, 1]), 
+                            'Presumido': float(df.iloc[1, 1]), 
+                            'Real': float(df.iloc[2, 1])},
             'por_funcionario': float(df.iloc[3, 1]),
             'por_nota_fiscal': float(df.iloc[4, 1]),
             'por_lancamento': float(df.iloc[5, 1]),
             'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8},
             'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}
         }
-    except:
-        return {'base_regime': {'Simples': 2.0, 'Presumido': 5.0, 'Real': 10.0}, 'por_funcionario': 0.5, 'por_nota_fiscal': 0.1, 'por_lancamento': 0.05, 'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8}, 'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}}
+    except Exception:
+        return {
+            'base_regime': {'Simples': 2.0, 'Presumido': 5.0, 'Real': 10.0},
+            'por_funcionario': 0.5, 'por_nota_fiscal': 0.1, 'por_lancamento': 0.05,
+            'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8},
+            'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}
+        }
 
+# Inicializa dados no session_state
 if 'custos_db' not in st.session_state:
     st.session_state.custos_db = carregar_config_custos()
+
 if 'pesos_esforço' not in st.session_state:
     st.session_state.pesos_esforço = carregar_pesos()
 
+# --- FUNÇÕES DE CÁLCULO ---
 def calcular_custo_hora():
     custo_total = st.session_state.custos_db['pessoal'] + st.session_state.custos_db['despesas_gerais']
     horas_totais = st.session_state.custos_db['horas_uteis_colaborador'] * st.session_state.custos_db['total_colaboradores']
     return custo_total / horas_totais if horas_totais > 0 else 0
 
 def calcular_esforco(regime, funcionarios, notas, lancamentos, complexidade, atendimento):
-    h_base = st.session_state.pesos_esforço['base_regime'][regime]
-    h_var = (funcionarios * st.session_state.pesos_esforço['por_funcionario']) + (notas * st.session_state.pesos_esforço['por_nota_fiscal']) + (lancamentos * st.session_state.pesos_esforço['por_lancamento'])
-    return (h_base + h_var) * st.session_state.pesos_esforço['fator_complexidade'][complexidade] * st.session_state.pesos_esforço['fator_atendimento'][atendimento]
+    horas_base = st.session_state.pesos_esforço['base_regime'][regime]
+    horas_variaveis = (funcionarios * st.session_state.pesos_esforço['por_funcionario']) + \
+                      (notas * st.session_state.pesos_esforço['por_nota_fiscal']) + \
+                      (lancamentos * st.session_state.pesos_esforço['por_lancamento'])
+    
+    total_horas = (horas_base + horas_variaveis) * \
+                  st.session_state.pesos_esforço['fator_complexidade'][complexidade] * \
+                  st.session_state.pesos_esforço['fator_atendimento'][atendimento]
+    return total_horas
 
-st.title("📊 Gestão de Precificação - Escrita Contabilidade")
+# --- INTERFACE ---
+st.title("📊 Gestão de Precificação Baseada em Custo Real")
+
 tabs = st.tabs(["Cálculo de Preço", "Configuração de Custos", "Dashboard Gerencial", "Simulador"])
 
+# --- TAB 1: CÁLCULO DE PREÇO ---
 with tabs[0]:
-    st.header("Novo Orçamento")
+    st.header("Novo Orçamento / Análise de Cliente")
+    
     col1, col2 = st.columns(2)
     with col1:
-        nome_cliente = st.text_input("Nome do Cliente")
-        regime = st.selectbox("Regime", ["Simples", "Presumido", "Real"])
-        faturamento = st.number_input("Faturamento Estimado (R$)", min_value=0.0, format="%.2f")
-        funcionarios = st.number_input("Funcionários", min_value=0, step=1)
+        nome_cliente = st.text_input("Nome do Cliente/Prospect")
+        regime = st.selectbox("Regime Tributário", ["Simples", "Presumido", "Real"])
+        faturamento = st.number_input("Faturamento Mensal Estimado (R$)", min_value=0.0, format="%.2f")
+        funcionarios = st.number_input("Nº de Funcionários", min_value=0, step=1)
+    
     with col2:
-        notas = st.number_input("Notas Fiscais", min_value=0, step=1)
-        lancamentos = st.number_input("Lançamentos", min_value=0, step=1)
-        complexidade = st.select_slider("Complexidade", options=["Baixa", "Média", "Alta"])
-        atendimento = st.select_slider("Atendimento", options=["Baixo", "Médio", "Alto"])
+        notas = st.number_input("Qtd Notas Fiscais/Mês", min_value=0, step=1)
+        lancamentos = st.number_input("Qtd Lançamentos Contábeis/Mês", min_value=0, step=1)
+        complexidade = st.select_slider("Complexidade Técnica", options=["Baixa", "Média", "Alta"])
+        atendimento = st.select_slider("Nível de Atendimento (Suporte)", options=["Baixo", "Médio", "Alto"])
 
-    custo_h = calcular_custo_hora()
-    esforco = calcular_esforco(regime, funcionarios, notas, lancamentos, complexidade, atendimento)
-    custo_total_cli = esforco * custo_h
+    custo_hora = calcular_custo_hora()
+    horas_estimadas = calcular_esforco(regime, funcionarios, notas, lancamentos, complexidade, atendimento)
+    custo_operacional_cliente = horas_estimadas * custo_hora
 
     st.divider()
-    res1, res2, res3 = st.columns(3)
-    precos = {}
+    
+    col_res1, col_res2, col_res3 = st.columns(3)
+    precos_calculados = {}
 
-    def render_card(label, margin, col):
+    def render_price_card(label, margin):
         tax = st.session_state.custos_db['impostos_sobre_faturamento'] / 100
-        p = custo_total_cli / (1 - tax - (margin/100))
-        col.metric(label, format_brl(p), f"Margem: {margin}%")
-        return p
+        preco = custo_operacional_cliente / (1 - tax - (margin/100))
+        st.metric(label, format_brl(preco), f"Margem: {margin}%")
+        return preco
 
-    precos['Bronze'] = render_card("Bronze", 20, res1)
-    precos['Prata'] = render_card("Prata", 35, res2)
-    precos['Ouro'] = render_card("Ouro", 50, res3)
+    with col_res1:
+        st.subheader("Mínimo (Sobrevivência)")
+        precos_calculados['Bronze'] = render_price_card("Preço Bronze", 20)
+    
+    with col_res2:
+        st.subheader("Ideal (Crescimento)")
+        precos_calculados['Prata'] = render_price_card("Preço Prata", 35)
+        
+    with col_res3:
+        st.subheader("Premium (Alta Rentabilidade)")
+        precos_calculados['Ouro'] = render_price_card("Preço Ouro", 50)
+
+    st.info(f"Esforço estimado: **{horas_estimadas:.2f} horas/mês** | Custo operacional direto: **{format_brl(custo_operacional_cliente)}**")
 
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                gc = get_gspread_client()
-                # Abre a planilha pelo ID exato
-                sh = gc.open_by_key("1NYxBBZ1OM_dvlAV9nHoS6JcSaQRIuVXRXFrI3FHRviM")
-                # Abre a aba Orcamentos pelo nome exato (ou use .get_worksheet(2))
-                ws = sh.worksheet("Orcamentos")
+                # Lemos a aba específica de Orçamentos via GID (como string)
+                df_atual = conn.read(worksheet=GID_ORCAMENTOS, ttl=0)
                 
-                nova_linha = [nome_cliente, datetime.now().strftime("%d/%m/%Y"), round(precos['Prata'], 2), 35]
-                ws.append_row(nova_linha)
+                # Criamos a nova linha
+                nova_data = {
+                    df_atual.columns[0]: nome_cliente,
+                    df_atual.columns[1]: datetime.now().strftime("%d/%m/%Y"),
+                    df_atual.columns[2]: round(precos_calculados['Prata'], 2),
+                    df_atual.columns[3]: 35
+                }
                 
-                st.success("✅ Salvo com sucesso via gspread!")
+                df_novo = pd.DataFrame([nova_data])
+                df_final = pd.concat([df_atual, df_novo], ignore_index=True)
+                
+                # Atualiza usando o GID exato (como string)
+                conn.update(worksheet=GID_ORCAMENTOS, data=df_final)
+                st.success("✅ Orçamento salvo com sucesso!")
+                st.cache_data.clear() # Limpa o cache para atualizar o Dashboard
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
         else:
-            st.warning("⚠️ Digite o nome do cliente.")
+            st.warning("⚠️ Digite o nome do cliente antes de salvar.")
 
+# --- TAB 2: CONFIGURAÇÃO DE CUSTOS (DRE) ---
 with tabs[1]:
-    st.header("Configuração de Custos")
+    st.header("Configuração da Operação (Base DRE)")
+    
     col_c1, col_c2 = st.columns(2)
     with col_c1:
-        st.session_state.custos_db['pessoal'] = st.number_input("Folha", value=st.session_state.custos_db['pessoal'], format="%.2f")
-        st.session_state.custos_db['despesas_gerais'] = st.number_input("Despesas", value=st.session_state.custos_db['despesas_gerais'], format="%.2f")
-        st.session_state.custos_db['impostos_sobre_faturamento'] = st.slider("Impostos %", 0.0, 30.0, st.session_state.custos_db['impostos_sobre_faturamento'])
+        st.session_state.custos_db['pessoal'] = st.number_input("Folha de Pagamento + Encargos (Mensal)", value=st.session_state.custos_db['pessoal'], format="%.2f")
+        st.session_state.custos_db['despesas_gerais'] = st.number_input("Aluguel, Software, Energia, Outros", value=st.session_state.custos_db['despesas_gerais'], format="%.2f")
+        st.session_state.custos_db['impostos_sobre_faturamento'] = st.slider("Impostos S/ Faturamento (%)", 0.0, 30.0, st.session_state.custos_db['impostos_sobre_faturamento'])
+    
     with col_c2:
-        st.session_state.custos_db['total_colaboradores'] = st.number_input("Colaboradores", value=int(st.session_state.custos_db['total_colaboradores']), step=1)
-        st.session_state.custos_db['horas_uteis_colaborador'] = st.number_input("Horas Úteis", value=st.session_state.custos_db['horas_uteis_colaborador'], format="%.2f")
-        st.metric("Custo Hora", format_brl(calcular_custo_hora()))
+        st.session_state.custos_db['total_colaboradores'] = st.number_input("Total de Colaboradores Operacionais", value=int(st.session_state.custos_db['total_colaboradores']), step=1)
+        st.session_state.custos_db['horas_uteis_colaborador'] = st.number_input("Horas Produtivas por Colaborador/Mês", value=st.session_state.custos_db['horas_uteis_colaborador'], format="%.2f")
+        
+        st.metric("Custo Hora Calculado", format_brl(calcular_custo_hora()))
 
+# --- TAB 3: DASHBOARD GERENCIAL ---
 with tabs[2]:
-    st.header("Análise de Carteira")
+    st.header("Análise de Carteira Real")
     try:
-        df_real = conn.read(worksheet="Orcamentos", ttl=0)
+        df_real = conn.read(worksheet=GID_ORCAMENTOS, ttl=0)
         if not df_real.empty:
             df_display = df_real.copy()
+            # Formata a coluna de preço (índice 2)
             df_display.iloc[:, 2] = df_display.iloc[:, 2].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
-    except:
-        st.warning("Sem dados.")
+        else:
+            st.info("A aba de histórico está vazia.")
+    except Exception as e:
+        st.warning(f"Erro ao carregar dashboard: {e}")
 
+# --- TAB 4: SIMULADOR ---
 with tabs[3]:
-    st.header("Simulador")
-    aumento = st.slider("Aumento %", 0, 100, 0)
-    st.warning(f"Custo invisível: {format_brl(calcular_custo_hora() * (1 + (aumento/100)))}")
+    st.header("Simulador de Escala")
+    st.write("O que acontece se a carga de trabalho aumentar em X% sem contratar?")
+    aumento_carga = st.slider("Aumento de Volume Operacional (%)", 0, 100, 0)
+    novo_custo_hora = calcular_custo_hora() * (1 + (aumento_carga/100))
+    st.warning(f"Se o volume aumentar {aumento_carga}% sem novos recursos, o custo invisível por hora sobe para **{format_brl(novo_custo_hora)}** devido à perda de eficiência.")
