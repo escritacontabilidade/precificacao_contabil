@@ -20,7 +20,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_config_custos():
     try:
-        # worksheet=0 pega a PRIMEIRA aba da esquerda para a direita
+        # worksheet=0 pega a PRIMEIRA aba (Custos)
         df = conn.read(worksheet=0, ttl=0)
         return {
             'pessoal': float(df.iloc[0, 1]),
@@ -37,7 +37,7 @@ def carregar_config_custos():
 
 def carregar_pesos():
     try:
-        # worksheet=1 pega a SEGUNDA aba
+        # worksheet=1 pega a SEGUNDA aba (Pesos)
         df = conn.read(worksheet=1, ttl=0)
         return {
             'base_regime': {'Simples': float(df.iloc[0, 1]), 
@@ -135,10 +135,9 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # worksheet=2 pega a TERCEIRA aba
+                # worksheet=2 pega a TERCEIRA aba (Orcamentos)
                 df_atual = conn.read(worksheet=2, ttl=0)
                 
-                # Criamos a nova linha mapeando para as colunas existentes pelo índice
                 novo_linha = pd.DataFrame([{
                     df_atual.columns[0]: nome_cliente,
                     df_atual.columns[1]: datetime.now().strftime("%d/%m/%Y"),
@@ -147,6 +146,7 @@ with tabs[0]:
                 }])
                 
                 df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
+                # O update usando o índice numérico da aba evita erros de 404 por nome
                 conn.update(worksheet=2, data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
@@ -180,6 +180,7 @@ with tabs[1]:
 with tabs[2]:
     st.header("Análise de Carteira Real")
     try:
+        # worksheet=2 pega a TERCEIRA aba
         df_real = conn.read(worksheet=2, ttl=0)
         df_display = df_real.copy()
         if not df_display.empty:
