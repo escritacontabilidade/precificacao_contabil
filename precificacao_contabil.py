@@ -20,9 +20,8 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_config_custos():
     try:
-        # Lê a 1ª aba (índice 0) idependente do nome
+        # worksheet=0 pega a PRIMEIRA aba da esquerda para a direita
         df = conn.read(worksheet=0, ttl=0)
-        # Acessa pela posição: iloc[linha, coluna]
         return {
             'pessoal': float(df.iloc[0, 1]),
             'despesas_gerais': float(df.iloc[1, 1]),
@@ -38,14 +37,12 @@ def carregar_config_custos():
 
 def carregar_pesos():
     try:
-        # Lê a 2ª aba (índice 1)
+        # worksheet=1 pega a SEGUNDA aba
         df = conn.read(worksheet=1, ttl=0)
         return {
-            'base_regime': {
-                'Simples': float(df.iloc[0, 1]), 
-                'Presumido': float(df.iloc[1, 1]), 
-                'Real': float(df.iloc[2, 1])
-            },
+            'base_regime': {'Simples': float(df.iloc[0, 1]), 
+                            'Presumido': float(df.iloc[1, 1]), 
+                            'Real': float(df.iloc[2, 1])},
             'por_funcionario': float(df.iloc[3, 1]),
             'por_nota_fiscal': float(df.iloc[4, 1]),
             'por_lancamento': float(df.iloc[5, 1]),
@@ -138,23 +135,18 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # Lê a 3ª aba (índice 2) para o histórico
+                # worksheet=2 pega a TERCEIRA aba
                 df_atual = conn.read(worksheet=2, ttl=0)
                 
-                # Criamos o novo dado ignorando os nomes de colunas originais
-                # Garantimos que a ordem seja: Cliente, Data, Preço, Margem
-                novo_dado = [
-                    nome_cliente, 
-                    datetime.now().strftime("%d/%m/%Y"), 
-                    round(precos_calculados['Prata'], 2), 
-                    35
-                ]
+                # Criamos a nova linha mapeando para as colunas existentes pelo índice
+                novo_linha = pd.DataFrame([{
+                    df_atual.columns[0]: nome_cliente,
+                    df_atual.columns[1]: datetime.now().strftime("%d/%m/%Y"),
+                    df_atual.columns[2]: round(precos_calculados['Prata'], 2),
+                    df_atual.columns[3]: 35
+                }])
                 
-                # Criamos um DataFrame temporário com os mesmos cabeçalhos do atual para o concat
-                df_novo = pd.DataFrame([novo_dado], columns=df_atual.columns)
-                df_final = pd.concat([df_atual, df_novo], ignore_index=True)
-                
-                # Salva na 3ª aba
+                df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
                 conn.update(worksheet=2, data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
@@ -188,15 +180,14 @@ with tabs[1]:
 with tabs[2]:
     st.header("Análise de Carteira Real")
     try:
-        # Lê a 3ª aba
         df_real = conn.read(worksheet=2, ttl=0)
         df_display = df_real.copy()
         if not df_display.empty:
-            # Formata a 3ª coluna (Preço) independente do nome que ela tenha
+            # Formata a terceira coluna (índice 2) independente do nome
             df_display.iloc[:, 2] = df_display.iloc[:, 2].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
         else:
-            st.info("O histórico está vazio.")
+            st.info("A aba de histórico está vazia.")
     except Exception as e:
         st.warning(f"Erro ao carregar dashboard: {e}")
 
