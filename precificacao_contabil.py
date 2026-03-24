@@ -10,7 +10,10 @@ st.set_page_config(page_title="Sistema de Precificação Contábil v1.0", layout
 # --- FUNÇÃO DE FORMATAÇÃO BRASILEIRA ---
 def format_brl(valor):
     """Formata números para o padrão de moeda brasileiro."""
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    try:
+        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "R$ 0,00"
 
 # --- CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -35,13 +38,14 @@ def carregar_config_custos():
 def carregar_pesos():
     try:
         df = conn.read(worksheet="Pesos", ttl=0)
+        # CORREÇÃO: Usando 'valor_peso' conforme o print enviado
         return {
-            'base_regime': {'Simples': float(df.loc[df['parametro'] == 'Simples', 'valor'].values[0]), 
-                            'Presumido': float(df.loc[df['parametro'] == 'Presumido', 'valor'].values[0]), 
-                            'Real': float(df.loc[df['parametro'] == 'Real', 'valor'].values[0])},
-            'por_funcionario': float(df.loc[df['parametro'] == 'por_funcionario', 'valor'].values[0]),
-            'por_nota_fiscal': float(df.loc[df['parametro'] == 'por_nota_fiscal', 'valor'].values[0]),
-            'por_lancamento': float(df.loc[df['parametro'] == 'por_lancamento', 'valor'].values[0]),
+            'base_regime': {'Simples': float(df.loc[df['parametro'] == 'Simples', 'valor_peso'].values[0]), 
+                            'Presumido': float(df.loc[df['parametro'] == 'Presumido', 'valor_peso'].values[0]), 
+                            'Real': float(df.loc[df['parametro'] == 'Real', 'valor_peso'].values[0])},
+            'por_funcionario': float(df.loc[df['parametro'] == 'por_funcionario', 'valor_peso'].values[0]),
+            'por_nota_fiscal': float(df.loc[df['parametro'] == 'por_nota_fiscal', 'valor_peso'].values[0]),
+            'por_lancamento': float(df.loc[df['parametro'] == 'por_lancamento', 'valor_peso'].values[0]),
             'fator_complexidade': {'Baixa': 1.0, 'Média': 1.3, 'Alta': 1.8},
             'fator_atendimento': {'Baixo': 1.0, 'Médio': 1.2, 'Alto': 1.5}
         }
@@ -131,13 +135,13 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # Lógica de atualização/append para GSheets
+                # Lógica de atualização alinhada aos nomes das colunas da planilha (minúsculas conforme print)
                 df_atual = conn.read(worksheet="Orcamentos", ttl=0)
                 novo_linha = pd.DataFrame([{
-                    "Data": datetime.now().strftime("%d/%m/%Y"),
-                    "Cliente": nome_cliente,
-                    "Custo_Operacional": round(custo_operacional_cliente, 2),
-                    "Preco_Sugerido": round(precos_calculados['Prata'], 2)
+                    "cliente": nome_cliente,
+                    "data": datetime.now().strftime("%d/%m/%Y"),
+                    "preco_sugerido": round(precos_calculados['Prata'], 2),
+                    "margem": 35
                 }])
                 df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
                 conn.update(worksheet="Orcamentos", data=df_final)
@@ -174,14 +178,16 @@ with tabs[2]:
     st.header("Análise de Carteira Real")
     try:
         df_real = conn.read(worksheet="Orcamentos", ttl=0)
-        # Formata o DataFrame para exibição BR
         df_display = df_real.copy()
         if not df_display.empty:
-            df_display['Custo_Operacional'] = df_display['Custo_Operacional'].apply(format_brl)
-            df_display['Preco_Sugerido'] = df_display['Preco_Sugerido'].apply(format_brl)
-        st.dataframe(df_display, use_container_width=True)
-    except:
-        st.warning("Nenhum dado encontrado ou erro na leitura da aba 'Orcamentos'.")
+            # Formatação para exibição no Dashboard
+            if 'preco_sugerido' in df_display.columns:
+                df_display['preco_sugerido'] = df_display['preco_sugerido'].apply(format_brl)
+            st.dataframe(df_display, use_container_width=True)
+        else:
+            st.info("A aba 'Orcamentos' está vazia.")
+    except Exception as e:
+        st.warning(f"Erro ao carregar dashboard: {e}")
 
 # --- TAB 4: SIMULADOR ---
 with tabs[3]:
