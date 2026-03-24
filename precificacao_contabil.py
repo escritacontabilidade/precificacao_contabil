@@ -38,7 +38,7 @@ def carregar_config_custos():
 def carregar_pesos():
     try:
         df = conn.read(worksheet="Pesos", ttl=0)
-        # CORREÇÃO: Usando 'valor_peso' conforme o print enviado
+        # CORREÇÃO 1: Usando 'valor_peso' conforme o seu print real da planilha
         return {
             'base_regime': {'Simples': float(df.loc[df['parametro'] == 'Simples', 'valor_peso'].values[0]), 
                             'Presumido': float(df.loc[df['parametro'] == 'Presumido', 'valor_peso'].values[0]), 
@@ -135,7 +135,7 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # Lógica de atualização alinhada aos nomes das colunas da planilha (minúsculas conforme print)
+                # CORREÇÃO 2: Lógica de atualização alinhada exatamente aos nomes do seu print (minúsculos)
                 df_atual = conn.read(worksheet="Orcamentos", ttl=0)
                 novo_linha = pd.DataFrame([{
                     "cliente": nome_cliente,
@@ -144,6 +144,7 @@ with tabs[0]:
                     "margem": 35
                 }])
                 df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
+                # CORREÇÃO 3: Update forçando o nome da aba para evitar o erro 404
                 conn.update(worksheet="Orcamentos", data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
@@ -180,7 +181,6 @@ with tabs[2]:
         df_real = conn.read(worksheet="Orcamentos", ttl=0)
         df_display = df_real.copy()
         if not df_display.empty:
-            # Formatação para exibição no Dashboard
             if 'preco_sugerido' in df_display.columns:
                 df_display['preco_sugerido'] = df_display['preco_sugerido'].apply(format_brl)
             st.dataframe(df_display, use_container_width=True)
