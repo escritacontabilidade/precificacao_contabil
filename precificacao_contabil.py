@@ -16,6 +16,7 @@ def format_brl(valor):
         return "R$ 0,00"
 
 # --- CONEXÃO COM BANCO DE DADOS (GOOGLE SHEETS) ---
+# Com a planilha pública, o Streamlit usará a URL definida no Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_config_custos():
@@ -38,7 +39,7 @@ def carregar_config_custos():
 def carregar_pesos():
     try:
         df = conn.read(worksheet="Pesos", ttl=0)
-        # CORREÇÃO 1: Usando 'valor_peso' conforme o seu print real da planilha
+        # Usando 'valor_peso' conforme a estrutura da sua planilha
         return {
             'base_regime': {'Simples': float(df.loc[df['parametro'] == 'Simples', 'valor_peso'].values[0]), 
                             'Presumido': float(df.loc[df['parametro'] == 'Presumido', 'valor_peso'].values[0]), 
@@ -135,7 +136,7 @@ with tabs[0]:
     if st.button("💾 Salvar Orçamento na Planilha"):
         if nome_cliente:
             try:
-                # CORREÇÃO 2: Lógica de atualização alinhada exatamente aos nomes do seu print (minúsculos)
+                # Lógica de atualização
                 df_atual = conn.read(worksheet="Orcamentos", ttl=0)
                 novo_linha = pd.DataFrame([{
                     "cliente": nome_cliente,
@@ -144,7 +145,7 @@ with tabs[0]:
                     "margem": 35
                 }])
                 df_final = pd.concat([df_atual, novo_linha], ignore_index=True)
-                # CORREÇÃO 3: Update forçando o nome da aba para evitar o erro 404
+                # O update funcionará se o link estiver como "Qualquer pessoa com o link" como Editor
                 conn.update(worksheet="Orcamentos", data=df_final)
                 st.success("✅ Orçamento salvo com sucesso!")
             except Exception as e:
